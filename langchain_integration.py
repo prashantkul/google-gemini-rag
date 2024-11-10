@@ -9,11 +9,12 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, Prom
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
+from langchain_openai import OpenAIEmbeddings
 
 # LangChain specific imports
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_milvus import Milvus
-from langchain_openai import OpenAI 
+from langchain.chat_models import ChatOpenAI  # Import ChatOpenAI for chat models
 
 # Memory and callbacks
 from langchain.memory import ConversationBufferMemory, ChatMessageHistory
@@ -28,6 +29,7 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains import create_retrieval_chain
 
 import google.generativeai as genai
+from keybert import KeyBERT
 
 # ignore warnings
 import warnings
@@ -52,15 +54,27 @@ class LangChainRAGSystem:
 
         # Initialize components
         self._setup_langsmith()
-        self._setup_embeddings()
+       # self._setup_embeddings()
         self._setup_milvus()
-       # self._setup_llm()
+        self.configure_gemini()
+        self._setup_llm()
         self._setup_retrieval_chain()
         self._setup_chat_memory()
-        self.configure_gemini()
-        self._setup_secondary_llm()
+        #self._setup_secondary_llm()
+        
+        self.kw_model = KeyBERT(model="distilbert-base-nli-mean-tokens")
 
 
+    def _setup_llm(self):
+        """Initialize the primary LLM, Google Gemini."""
+        self.llm = ChatOpenAI(
+            model="gpt-4",
+            openai_api_key=os.getenv("OPENAI_API_KEY"),  
+            temperature=0.7,
+            max_tokens=2048,
+        )
+        print("Primary LLM (ChatGPT4) configured.")
+    
     def _setup_langsmith(self):
         """Initialize LangSmith tracking if API key is available."""
         if self.langsmith_api_key:
@@ -84,49 +98,39 @@ class LangChainRAGSystem:
         genai.configure(api_key=self.google_api_key)
         print("Gemini API configured successfully.")
     
-    def _setup_secondary_llm(self):
-        """Initialize ChatGPT-4 as the secondary LLM using LangChain's OpenAI wrapper."""
-        self.secondary_llm = OpenAI(
-            model="gpt-4",
-            api_key=os.getenv("OPENAI_API_KEY"),  # Ensure this is set in your .env file
-            temperature=0.7,
-            max_tokens=2048,
-        )
-        print("Secondary LLM (ChatGPT-4) configured using LangChain.")
 
-    def _setup_embeddings(self):
-        """Initialize Google AI SDK for embeddings."""
-        genai.configure(api_key=self.google_api_key)
-        self.emb_model = self.emb_model or "models/text-embedding-004"  # fallback if env var not set
         
-        # Test the embeddings setup
-        try:
-            test_response = genai.embed_content(
-                model=self.emb_model,
-                content="Test embedding setup"
-            )
-            print(f"Embeddings setup successful. Vector dimension: {len(test_response['embedding'])}")
-        except Exception as e:
-            print(f"Error setting up embeddings: {str(e)}")
-            raise
+    # def _setup_embeddings(self):
+    #     """Initialize Google AI SDK for embeddings."""
+    #     genai.configure(api_key=self.google_api_key)
+    #     self.emb_model = self.emb_model or "models/text-embedding-004"  # fallback if env var not set
+        
+    #     # Test the embeddings setup
+    #     try:
+    #         test_response = genai.embed_content(
+    #             model=self.emb_model,
+    #             content="Test embedding setup"
+    #         )
+    #         print(f"Embeddings setup successful. Vector dimension: {len(test_response['embedding'])}")
+    #     except Exception as e:
+    #         print(f"Error setting up embeddings: {str(e)}")
+    #         raise
 
     def generate_embedding(self, text: str) -> list:
         """
-        Generate embeddings for given text using Google API.
-        
-        Args:
-            text (str): The text to generate embeddings for
-            
-        Returns:
-            list: The embedding vector
+        Generate and return an embedding vector for a given text input.
         """
-        print("\nGenerating embeddings with Google Gemini: ", self.emb_model)
         try:
-            response = genai.embed_content(
-                model=self.emb_model,
-                content=text
+            # Initialize the OpenAI embedding model
+            embeddings = OpenAIEmbeddings(
+                model="text-embedding-3-large"
             )
-            return response["embedding"]
+            
+            # Generate the embedding for the provided text
+            embedding_vector = embeddings.embed_query(text)  # This returns the embedding vector as a list of floats
+            print(f"Embedding generated successfully. Dimension: {len(embedding_vector)}")
+
+            return embedding_vector
         except Exception as e:
             print(f"Error generating embedding: {str(e)}")
             raise
@@ -181,7 +185,8 @@ class LangChainRAGSystem:
         """Initialize the RAG chain with a custom prompt."""
         # Define the prompt for combining documents
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """Use the following pieces of context to answer the user's question. 
+            ("system", """You are a chatbot for University of Chicagos Applied Data Science program.
+            Use the following pieces of context to answer the user's question regarding this program. 
             If you don't know the answer based on the context, use your knowledgebase or search the web.
             
             Context: {context}"""),
@@ -215,16 +220,16 @@ class LangChainRAGSystem:
             input_key="input"
         )
         
-        # Create the chat prompt template
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a helpful AI assistant with access to a knowledge base. 
-            Use the provided context to answer questions accurately.
-            If you don't know the answer based on the context, use your knowledgebase or search the University of Chicago data science website.
-            
-            Context: {context}"""),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}")
-        ])
+                ("system", """You are a helpful assistant for the University of Chicago's Applied Data Science program.
+                Use the provided context to answer the user's question about this program. If the context includes specific course titles or program details, 
+                list them explicitly. Only recommend checking the official website if essential details are missing in the context.
+                
+                Context: {context}"""),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{input}")
+            ])
+        
         
         # Create the runnable chain
         chain = (
@@ -240,35 +245,57 @@ class LangChainRAGSystem:
         
         # Initialize the conversation chain
         self.conversation_chain = chain
-        
+    
+
+    def extract_keywords(self, query: str):
+        keywords = self.kw_model.extract_keywords(query, top_n=2, keyphrase_ngram_range=(1, 2))
+        return [kw[0] for kw in keywords]  # Return only keyword strings
+    
+    
     def query(self, question: str, use_memory: bool = True) -> Dict[str, Any]:
         """
-        Query the RAG system with proper memory handling, returning a document containing specific keywords if available.
+        Query the RAG system with proper memory handling, using ChatGPT-4 as fallback if needed.
         """
         try:
             # Get relevant documents with similarity scores
-            search_results = self.similarity_search(question)
+            #search_results = self.similarity_search(question)
+            search_results = self.hybrid_search(question)
             
-            # Define a maximum threshold for relevance
-            max_relevance_threshold = 0.3  
-
+            for doc, score in search_results:
+                print("-"*100)
+                print(f"Content: {doc.page_content}\nScore: {score}\nURL: {doc.metadata['url']}\n")
+                print("-"*100)
+                
+            # Get the top results
+            context_size = 3
             # Check if Milvus found relevant results
             if search_results:
-                # Find the best match (lowest L2 distance)
-                best_doc, best_score = min(search_results, key=lambda x: x[1])
+                # Sort the search results by score (ascending for L2 distance)
+                sorted_results = sorted(search_results, key=lambda x: x[1])
 
-                # Check if the best match is within the max relevance threshold
-                if best_score <= max_relevance_threshold:
-                    print("Relevant document found in Milvus.")
-                    context = [best_doc]
-                else:
-                    # If the score is above the threshold, treat it as irrelevant and fallback to web search
-                    print("No relevant documents within threshold in Milvus, attempting web search...")
-                    context = [self.perform_web_search(question)]
-            else:
-                # No results found in Milvus, proceed to web search
-                print("No results found in Milvus, attempting web search...")
-                context = [self.perform_web_search(question)]
+                # Select the top `context_size` chunks and extract text content
+                selected_chunks = [doc.page_content for doc, score in sorted_results[:context_size]]
+                urls = [doc.metadata.get("url", "") for doc, score in sorted_results[:context_size]]
+
+                # Debug information to show selected chunks and scores
+                for idx, (doc, score) in enumerate(sorted_results[:context_size], 1):
+                    print(f"Top Result {idx}:")
+                    print(f"Score: {score}")
+                    print(f"Content Preview: {doc.page_content[:200]}...\n")
+
+                # Aggregate the selected chunks to form the final context
+                aggregated_context = "\n".join(selected_chunks)         
+                # if best_score >= min_relevance_threshold:  # Check if best score meets or exceeds the threshold
+                print("Relevant document found in Milvus")
+                print("Context being provided to LLM: {}".format(aggregated_context))
+                context = [aggregated_context]
+                
+                # else:
+                #     print("No relevant documents within threshold in Milvus, attempting web search...")
+                #     context = [self.perform_web_search(question)]
+            # else:
+            #     print("No results found in Milvus, attempting web search...")
+            #     context = [self.perform_web_search(question)]
 
             # Prepare input for conversation chain
             chain_input = {
@@ -277,10 +304,20 @@ class LangChainRAGSystem:
                 "chat_history": self.memory.load_memory_variables({}).get("chat_history", [])
             }
 
-            # Execute the conversation chain
+            # Execute the conversation chain with primary LLM
             answer = self.conversation_chain.invoke(chain_input)
-            print("### LLM Answer: {}".format(answer))
+            print("### Primary LLM Answer:", answer)
 
+            # # Check if the primary LLM answer is empty or unsatisfactory
+            # if not answer or "I don't know" or "I couldn't" in answer:  
+            #     print("Primary LLM returned no result, using ChatGPT-4 as fallback.")
+            #     # Call ChatGPT-4 as fallback using LangChain OpenAI wrapper
+            #     answer = self._query_chatgpt4_with_langchain(question, context)
+
+            #     if not answer or "I don't know" or "I couldn't" in answer:
+            #         print("ChatGPT-4 also failed to provide an answer.")
+            #         answer = "I couldn't find an answer to your question. Please check the link below for more information"
+            
             # Save question and answer to memory if memory usage is enabled
             if use_memory:
                 self.memory.save_context({"input": question}, {"answer": answer})
@@ -289,8 +326,7 @@ class LangChainRAGSystem:
                 "answer": answer,
                 "source_document": {
                     "content": context[0],
-                    "metadata": {"url": best_doc.metadata.get("url")} if search_results else {"url": "Web search"},
-                    "similarity_score": best_score if search_results else None
+                    "metadata": {"urls": urls},
                 }
             }
 
@@ -301,84 +337,310 @@ class LangChainRAGSystem:
                 "answer": f"An error occurred: {str(e)}",
                 "source_document": None
             }
+
+    # Helper method to query ChatGPT-4 via LangChain
+    def _query_chatgpt4_with_langchain(self, question: str, context: List[str]) -> str:
+        """Query ChatGPT-4 for a response via LangChain's ChatOpenAI wrapper."""
+        try:
+            # Prepare the messages for ChatGPT-4, including context if available
+            context_text = "\n\n".join([str(c) for c in context])
+            messages = [
+                ( "system", "You are a helpful assistant."),
+                ("user", f"Context:\n{context_text}\n\nQuestion: {question}")
+            ]
+
+            # Use LangChain's ChatOpenAI wrapper to get the response from ChatGPT-4
+            response = self.secondary_llm.invoke(messages)
+            print(response)
+            chatgpt4_answer = response['choices'][0]['message']['content']
+            print("### ChatGPT-4 Answer via LangChain:", chatgpt4_answer)
+            return chatgpt4_answer
+
+        except Exception as e:
+            print(f"Error querying ChatGPT-4 via LangChain: {str(e)}")
+            return "I couldn't retrieve an answer from ChatGPT-4 either."
             
-    def similarity_search(self, query: str, k: int = 3) -> List[Tuple[Document, float]]:
+    # def similarity_search(self, query: str, k: int = 8) -> List[Tuple[Document, float]]:
+    #     """
+    #     Perform a similarity search in Milvus using direct collection access.
+    #     """
+    #     try:
+    #         print(f"\nExecuting similarity search for query: '{query}'")
+            
+    #         # Generate embedding
+    #         query_embedding = self.generate_embedding(query)
+    #         print(f"Generated embedding dimension: {len(query_embedding)}")
+            
+    #         # Use direct collection access for search
+    #         search_params = {
+    #             "metric_type": "COSINE",
+    #             "params": {"nprobe": 32}
+    #         }
+            
+    #         # Execute search using the collection directly
+    #         results = self.collection.search(
+    #             data=[query_embedding],
+    #             anns_field="embedding",  # Make sure this matches your schema
+    #             param=search_params,
+    #             limit=k,
+    #             output_fields=["content", "url"]
+    #         )
+            
+    #         if results:
+    #             print("Query returned results!")
+            
+    #         # Convert to Document format
+    #         documents_with_scores = []
+    #         for hits in results:
+    #             for hit in hits:
+    #                 try:
+    #                     # Debug the hit object
+    #                     print("\nRaw hit data:")
+    #                     print(f"Distance: {hit.distance}")
+    #                     print(f"ID: {hit.id}")
+                        
+    #                     # Get entity fields using proper attribute access
+    #                     entity = hit.entity
+                        
+    #                     # Create document using the entity data
+    #                     doc = Document(
+    #                         page_content=str(entity.content),  # Access as attribute
+    #                         metadata={
+    #                             'id': hit.id,
+    #                             'score': hit.distance,
+    #                             'url': str(entity.url)  # Access as attribute
+    #                         }
+    #                     )
+    #                     documents_with_scores.append((doc, hit.distance))
+                        
+    #                     # Debug output
+    #                     print(f"\nProcessed result:")
+    #                     print(f"Score: {hit.distance}")
+    #                     print(f"Content: {doc.page_content}")
+    #                     print(f"URL: {doc.metadata['url']}")
+                        
+    #                 except AttributeError as e:
+    #                     print(f"Attribute error processing hit: {e}")
+    #                     print(f"Available entity attributes: {dir(hit.entity)}")
+    #                     continue
+    #                 except Exception as e:
+    #                     print(f"Error processing hit: {e}")
+    #                     print(f"Hit structure: {dir(hit)}")
+    #                     continue
+            
+    #         print(f"\nFound {len(documents_with_scores)} valid results")
+    #         return documents_with_scores
+            
+    #     except Exception as e:
+    #         print(f"Error during similarity search: {str(e)}")
+    #         import traceback
+    #         traceback.print_exc()
+    #         return []
+
+    def expand_keywords(self, keywords):
         """
-        Perform a similarity search in Milvus using direct collection access.
+        Expand keywords to include both singular and plural forms
+        
+        Args:
+            keywords (list): List of keywords/keyphrases from the extraction model
+            
+        Returns:
+            list: Expanded list of keywords including singular/plural forms
+        """
+        expanded = set()
+        
+        for keyphrase in keywords:
+            # Add original keyphrase
+            expanded.add(keyphrase)
+            
+            # Handle individual words in the keyphrase
+            words = keyphrase.split()
+            for word in words:
+                # Add original word
+                expanded.add(word)
+                
+                # Add singular if word ends in 's'
+                if word.endswith('s') and len(word) > 3:
+                    singular = word[:-1]
+                    expanded.add(singular)
+                # Add plural if word doesn't end in 's'
+                elif not word.endswith('s'):
+                    plural = word + 's'
+                    expanded.add(plural)
+                    
+        return list(expanded)
+    
+    def rank_result(self, content: str, keywords: List[str]) -> float:
+        """
+        Calculate relevance score for a result
+        
+        Args:
+            content (str): Document content
+            keywords (List[str]): Original keywords/phrases
+            
+        Returns:
+            float: Relevance score
+        """
+        score = 0
+        content = content.lower()
+        
+        # Check exact phrase matches (highest priority)
+        for phrase in keywords:
+            if len(phrase.split()) > 1 and phrase.lower() in content:
+                score += 10  # Higher weight for exact phrases
+        
+        # Check individual word matches
+        for keyword in keywords:
+            words = keyword.lower().split()
+            for word in words:
+                if word in content:
+                    score += 1
+        
+        return score
+
+    def hybrid_search(self, query: str, k: int = 8) -> List[Tuple[Document, float]]:
+        """
+        Hybrid search with deduplication and detailed debug output
         """
         try:
-            print(f"\nExecuting similarity search for query: '{query}'")
+            print(f"\nExecuting hybrid search for query: '{query}'")
             
-            # Generate embedding
+            # Generate embedding for the query
             query_embedding = self.generate_embedding(query)
-            print(f"Generated embedding dimension: {len(query_embedding)}")
             
-            # Use direct collection access for search
+            # Extract keywords and build expression
+            keywords = self.extract_keywords(query)
+            expanded_keywords = self.expand_keywords(keywords)
+            filter_expression = " or ".join([f'content like "%{k}%"' for k in expanded_keywords])
+            
+            print(f"Extracted Keywords: {keywords}")
+            print("Filter expression: ", filter_expression)
+            
             search_params = {
                 "metric_type": "L2",
-                "params": {"nprobe": 10}
+                "params": {
+                    "nprobe": 10,
+                }
             }
-            
-            # Execute search using the collection directly
-            results = self.collection.search(
+        
+            # Execute search with increased limit to account for duplicates
+            search_results = self.collection.search(
                 data=[query_embedding],
-                anns_field="embedding",  # Make sure this matches your schema
+                anns_field="embedding",
                 param=search_params,
-                limit=k,
-                output_fields=["content", "url"]
+                limit=k * 5,  # Double the limit to account for duplicates
+                output_fields=["metadata"]  
             )
-            
-            if results:
-                print("Query returned results!")
-            
-            # Convert to Document format
+        
+            print("\nDebug: Raw Search Results")
+            print("-" * 80)
+
+            # Process and debug print all results with deduplication
             documents_with_scores = []
-            for hits in results:
+            seen_hashes = set()
+
+            for hits in search_results:
                 for hit in hits:
                     try:
-                        # Debug the hit object
-                        print("\nRaw hit data:")
-                        print(f"Distance: {hit.distance}")
-                        print(f"ID: {hit.id}")
+                        # Directly access fields in `metadata`
+                        metadata = hit.entity.metadata  # Access metadata directly
+                        content = metadata.get("content", "")  # Safely access 'content' field
+                        url = metadata.get("url", "")  # Safely access 'url' field
+                        score = hit.distance
+
+                        print(f"\nContent: {content[:200]}...")  # Display a preview of the content
+                        print(f"Score: {score}")
+                        print(f"URL: {url}")
                         
-                        # Get entity fields using proper attribute access
-                        entity = hit.entity
-                        
-                        # Create document using the entity data
                         doc = Document(
-                            page_content=str(entity.content),  # Access as attribute
+                            page_content=content,
                             metadata={
-                                'id': hit.id,
-                                'score': hit.distance,
-                                'url': str(entity.url)  # Access as attribute
+                                'score': score,
+                                'url': url
                             }
                         )
-                        documents_with_scores.append((doc, hit.distance))
-                        
-                        # Debug output
-                        print(f"\nProcessed result:")
-                        print(f"Score: {hit.distance}")
-                        print(f"Content: {doc.page_content}")
-                        print(f"URL: {doc.metadata['url']}")
-                        
-                    except AttributeError as e:
-                        print(f"Attribute error processing hit: {e}")
-                        print(f"Available entity attributes: {dir(hit.entity)}")
-                        continue
+                        documents_with_scores.append((doc, score))
+
                     except Exception as e:
                         print(f"Error processing hit: {e}")
-                        print(f"Hit structure: {dir(hit)}")
                         continue
-            
-            print(f"\nFound {len(documents_with_scores)} valid results")
+
             return documents_with_scores
+        
+        
+        #     print("\nDebug: Raw Search Results")
+        #     print("-" * 80)
             
+        #     # Process and debug print all results with deduplication
+        #     documents_with_scores = []
+        #     seen_hashes = set()
+            
+        #     for hits_idx, hits in enumerate(results):
+        #         print(f"\nResult Set {hits_idx + 1}:")
+        #         for hit_idx, hit in enumerate(hits):
+        #             try:
+        #                 entity = hit.entity
+        #                 content = str(entity.content)
+        #                 url = str(entity.url)
+        #                 chunk_hash = str(entity.chunk_hash)
+                        
+        #                 # Skip if we've seen this content before
+        #                 if chunk_hash in seen_hashes:
+        #                     print(f"\nSkipping duplicate content (hash: {chunk_hash[:8]})")
+        #                     continue
+                        
+        #                 seen_hashes.add(chunk_hash)
+                        
+        #                 print(f"\nDocument {hit_idx + 1}:")
+        #                 print(f"Distance Score: {hit.distance}")
+        #                 print(f"URL: {url}")
+        #                 print(f"Content Hash: {chunk_hash[:8]}")  # Show first 8 chars of hash
+        #                 print(f"Content Preview: {content[:200]}...")
+                     
+                        
+        #                 doc = Document(
+        #                     page_content=content,
+        #                     metadata={
+        #                         'id': hit.id,
+        #                         'score': hit.distance,
+        #                         'url': url,
+        #                         'chunk_hash': chunk_hash  # Add hash to metadata
+        #                     }
+        #                 )
+        #                 documents_with_scores.append((doc, hit.distance))
+                        
+        #                 # Break if we have enough unique results
+        #                 if len(documents_with_scores) >= k:
+        #                     break
+                        
+        #             except Exception as e:
+        #                 print(f"Error processing hit {hit_idx}: {e}")
+        #                 continue
+                
+        #         if len(documents_with_scores) >= k:
+        #             break
+            
+        #     print("\nFinal Results Summary:")
+        #     print(f"Total unique results: {len(documents_with_scores)}")
+            
+        #     # Sort by score
+        #     documents_with_scores.sort(key=lambda x: x[1])
+            
+        #     print("\nTop 3 Unique Results After Sorting:")
+        #     for idx, (doc, score) in enumerate(documents_with_scores[:3], 1):
+        #         print(f"\nTop Result {idx}:")
+        #         print(f"Score: {score}")
+        #         print(f"URL: {doc.metadata['url']}")
+        #         print(f"Hash: {doc.metadata['chunk_hash'][:8]}")
+        #         print(f"Content Preview: {doc.page_content[:200]}...")
+            
+        #     return documents_with_scores
+                
         except Exception as e:
-            print(f"Error during similarity search: {str(e)}")
-            import traceback
+            print(f"Error during hybrid search: {str(e)}")
             traceback.print_exc()
             return []
-
+    
     def verify_search_result(self, query: str = "test query"):
         """
         Verify search functionality with detailed debugging.

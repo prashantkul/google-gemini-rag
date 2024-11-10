@@ -85,36 +85,45 @@ if "chat_history" not in st.session_state:
 
 # Callback function to clear the input after submission
 def submit_message():
-    # Retrieve user input
+    # Get user input from session state
     user_input = st.session_state.user_input
     
     if user_input:
-        # Get response from the RAG system
-        response = rag_system.query(user_input, use_memory=True)
-        if not response:
-            print("No response received from RAG system.")
-        print("*"*50)
-        print("## Response:", response)
-        print("*"*50)
-        # Extract answer and best source document
-        answer = response.get('answer', "No answer found.")
-        source_document = response.get('source_document', None)
+        try:
+            # Get response from RAG system
+            response = rag_system.query(user_input, use_memory=True)
+            
+            # Extract key information
+            answer = response.get('answer', 'No answer found.')
+            source_doc = response.get('source_document', {})
+            
+            # Get document content - handling Document object correctly
+            doc = source_doc.get('content')
+            if hasattr(doc, 'page_content'):  # If it's a Document object
+                doc_content = doc.page_content
+            else:  # If it's a string or other type
+                doc_content = str(doc) if doc else 'No additional information available'
+            
+            # Get URL
+            doc_url = source_doc.get('metadata', {}).get('urls', 'URL not available')
+            
+            # Update chat history
+            st.session_state.chat_history.extend([
+                ("You", user_input),
+                ("Bot", answer),
+                ("Source", f"URL: {doc_url}")
+            ])
+            
+            # Clear input
+            st.session_state.user_input = ""
+            
+        except Exception as e:
+            st.error(f"Error processing message: {str(e)}")
+            print(f"Error details: {e}")  # For debugging
         
-        # Append user input and bot response to chat history
-        st.session_state.chat_history.append(("You", user_input))
-        st.session_state.chat_history.append(("Bot", answer))
-        
-        # Append only the URL from the best source document to chat history for context
-        if source_document:
-            doc_content = source_document["content"]
-            doc_url = source_document.get("metadata", {}).get("url", "URL not available")
-            st.session_state.chat_history.append((
-                "Source",
-                f"URL: {doc_url}"
-            ))
-
-        # Clear the input field
-        st.session_state.user_input = ""  # Reset the input field using session state
+        finally:
+            # Clear the input field
+            st.session_state.user_input = ""  # Reset the input field using session state
 
 # Display chat history in a scrollable container
 st.markdown("### Chat History")

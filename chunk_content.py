@@ -8,7 +8,7 @@ import os
 from google.api_core import retry
 
 class MilvusEmbeddingHandler:
-    def __init__(self, host='10.0.0.123', port='19530', collection_name='ms_applied_data_science', env_path=".env"):
+    def __init__(self, host='127.0.0.1', port='19530', collection_name='ms_applied_data_science', env_path=".env"):
         load_dotenv(env_path)
         self.host = host
         self.port = port
@@ -16,7 +16,7 @@ class MilvusEmbeddingHandler:
         self.collection = None
 
         # Retrieve and configure API key
-        self.api_key = os.getenv('GEMINI_API_KEY')
+        self.api_key = os.getenv('GOOGLE_API_KEY')
         self.configure_genai()
 
         # Initialize the Gemini model
@@ -120,12 +120,12 @@ class MilvusEmbeddingHandler:
                     embeddings.append(embedding)
                     contents.append(chunk)
                     urls.append(row.get('url', ''))
-
+        
         print(f"Total embeddings generated: {len(embeddings)}")
         return contents, embeddings, urls
     
     def generate_single_embedding(self, chunk, row_index, chunk_index):
-        """Generate a single embedding and handle any errors."""
+        """Generate a single embedding, normalize it, and handle any errors."""
         try:
             # Generate the embedding (returns an EmbeddingDict object)
             embedding_response = genai.embed_content(model=self.model, content=chunk)
@@ -136,15 +136,21 @@ class MilvusEmbeddingHandler:
             # Debug: Print the embedding type and sample values
             print(f"Embedding type: {type(embedding)}, Length: {len(embedding)}")
             print(f"First 5 values of embedding: {embedding[:5]}")
-            return embedding
+
+            # Normalize the embedding using L2 norm
+            normalized_embedding = self.normalize_embedding(embedding)
+            
+            return normalized_embedding
 
         except Exception as e:
             print(f"Error generating embedding for row {row_index + 1}, chunk {chunk_index + 1}: {e}")
             return None  # Return None if embedding generation fails
 
-        except Exception as e:
-            print(f"Error generating embedding for row {row_index + 1}, chunk {chunk_index + 1}: {e}")
-            return None  # Return None if embedding generation fails
+    def normalize_embedding(self, embedding):
+        """Normalize the embedding to have unit length (L2 norm of 1)."""
+        print("Normalizing embedding...")
+        norm = np.linalg.norm(embedding)
+        return (embedding / norm).tolist() if norm > 0 else embedding
 
     def insert_into_milvus(self, contents, embeddings, urls):
         """Insert the generated data into Milvus."""
@@ -169,7 +175,7 @@ class MilvusEmbeddingHandler:
             print(f"Successfully inserted {len(embeddings)} records into Milvus.")
         except Exception as e:
             print(f"Error inserting data into Milvus: {e}")
-            
+                       
     def verify_insertion(self):
         """Verify the number of records in the collection."""
         self.collection.load()
@@ -202,7 +208,7 @@ if __name__ == "__main__":
     milvus_handler.create_collection()
     
     # Load the scraped data
-    scraped_data = milvus_handler.load_data('ms_applied_data_science_full_content_5.csv')
+    scraped_data = milvus_handler.load_data('ms_applied_data_science_full_content_cleaned_data.csv')
 
     #milvus_handler.sample_run()
     
