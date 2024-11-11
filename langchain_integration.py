@@ -4,21 +4,17 @@ from typing import List, Tuple, Dict, Any
 import traceback
 import requests
 # Core LangChain imports
-from langchain_core.runnables import RunnableWithMessageHistory
+
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
-from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
-
-# LangChain specific imports
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_milvus import Milvus
-from langchain.chat_models import ChatOpenAI  # Import ChatOpenAI for chat models
+from langchain_community.chat_models import ChatOpenAI
+
 
 # Memory and callbacks
-from langchain.memory import ConversationBufferMemory, ChatMessageHistory
-from langchain.callbacks import StreamingStdOutCallbackHandler
+from langchain.memory import ConversationBufferMemory
 from langchain.callbacks.tracers import LangChainTracer
 
 # LangSmith
