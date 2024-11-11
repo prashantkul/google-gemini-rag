@@ -37,17 +37,17 @@ class LangChainRAGSystem:
         """Initialize the RAG System with Milvus, LangChain, Gemini, and LangSmith."""
         
         # Load environment variables
-        load_dotenv()
+        #load_dotenv()
         
         # Environment configurations
-        self.milvus_host = os.getenv("MILVUS_HOST")
-        self.milvus_port = os.getenv("MILVUS_PORT")
-        self.milvus_db = os.getenv("MILVUS_DB")
-        self.collection_name = os.getenv("MILVUS_COLLECTION_NAME")
-        self.google_api_key = os.getenv("GOOGLE_API_KEY")
-        self.langsmith_api_key = os.getenv("LANGSMITH_API_KEY")
-        self.project_name = os.getenv("LANGSMITH_PROJECT_NAME")
-        self.emb_model = os.getenv("EMBEDDING_MODEL")
+        self.milvus_host = os.environ.get("MILVUS_HOST")
+        self.milvus_port = os.environ.get("MILVUS_PORT")
+        self.milvus_db = os.environ.get("MILVUS_DB")
+        self.collection_name = os.environ.get("MILVUS_COLLECTION_NAME")
+        self.google_api_key = os.environ.get("GOOGLE_API_KEY")
+        self.langsmith_api_key = os.environ.get("LANGSMITH_API_KEY")
+        self.project_name = os.environ.get("LANGSMITH_PROJECT_NAME")
+        self.emb_model = os.environ.get("EMBEDDING_MODEL")
 
         # Initialize components
         self._setup_langsmith()
@@ -64,7 +64,7 @@ class LangChainRAGSystem:
         """Initialize the primary LLM, Google Gemini."""
         self.llm = ChatOpenAI(
             model="gpt-4",
-            openai_api_key=os.getenv("OPENAI_API_KEY"),  
+            openai_api_key=os.environ.get("OPENAI_API_KEY"),  
             temperature=0.7,
             max_tokens=2048,
         )
@@ -713,8 +713,8 @@ class LangChainRAGSystem:
             url = "https://www.googleapis.com/customsearch/v1"
             params = {
                 "q": query,
-                "cx": os.getenv("GOOGLE_SEARCH_CX"),  # Google custom Search Engine ID
-                "key": os.getenv("GOOGLE_API_KEY"),   # Google API key
+                "cx": os.environ.get("GOOGLE_SEARCH_CX"),  # Google custom Search Engine ID
+                "key": os.environ.get("GOOGLE_API_KEY"),   # Google API key
             }
             response = requests.get(url, params=params)
             response.raise_for_status()
