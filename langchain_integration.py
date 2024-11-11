@@ -29,7 +29,8 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains import create_retrieval_chain
 
 import google.generativeai as genai
-from keybert import KeyBERT
+from prompt_security import PromptInjection
+
 
 # ignore warnings
 import warnings
@@ -62,8 +63,6 @@ class LangChainRAGSystem:
         self._setup_chat_memory()
         #self._setup_secondary_llm()
         
-        self.kw_model = KeyBERT(model="distilbert-base-nli-mean-tokens")
-
 
     def _setup_llm(self):
         """Initialize the primary LLM, Google Gemini."""
@@ -97,25 +96,7 @@ class LangChainRAGSystem:
             raise ValueError("API Key is missing. Please provide a valid API key.")
         genai.configure(api_key=self.google_api_key)
         print("Gemini API configured successfully.")
-    
-
-        
-    # def _setup_embeddings(self):
-    #     """Initialize Google AI SDK for embeddings."""
-    #     genai.configure(api_key=self.google_api_key)
-    #     self.emb_model = self.emb_model or "models/text-embedding-004"  # fallback if env var not set
-        
-    #     # Test the embeddings setup
-    #     try:
-    #         test_response = genai.embed_content(
-    #             model=self.emb_model,
-    #             content="Test embedding setup"
-    #         )
-    #         print(f"Embeddings setup successful. Vector dimension: {len(test_response['embedding'])}")
-    #     except Exception as e:
-    #         print(f"Error setting up embeddings: {str(e)}")
-    #         raise
-
+ 
     def generate_embedding(self, text: str) -> list:
         """
         Generate and return an embedding vector for a given text input.
@@ -257,6 +238,14 @@ class LangChainRAGSystem:
         Query the RAG system with proper memory handling, using ChatGPT-4 as fallback if needed.
         """
         try:
+            promptinjection = PromptInjection()
+            
+            # Detect prompt injection first to make sure prompt is safe for handling
+            injection_attempt = promptinjection.detect_prompt_injection(question)
+            
+            if not injection_attempt == "prompt_safe":
+                return injection_attempt
+            
             # Get relevant documents with similarity scores
             #search_results = self.similarity_search(question)
             search_results = self.hybrid_search(question)
@@ -509,12 +498,12 @@ class LangChainRAGSystem:
             query_embedding = self.generate_embedding(query)
             
             # Extract keywords and build expression
-            keywords = self.extract_keywords(query)
-            expanded_keywords = self.expand_keywords(keywords)
-            filter_expression = " or ".join([f'content like "%{k}%"' for k in expanded_keywords])
+            # keywords = self.extract_keywords(query)
+            # expanded_keywords = self.expand_keywords(keywords)
+            # filter_expression = " or ".join([f'content like "%{k}%"' for k in expanded_keywords])
             
-            print(f"Extracted Keywords: {keywords}")
-            print("Filter expression: ", filter_expression)
+            # print(f"Extracted Keywords: {keywords}")
+            # print("Filter expression: ", filter_expression)
             
             search_params = {
                 "metric_type": "L2",
